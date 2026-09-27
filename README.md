@@ -9,12 +9,12 @@ https://www.right.com.cn/forum/thread-8453612-1-1.html
 支持设备： 四个固件通用，设备名称只是区分不同功能 
 
 带USB设备:
-  XG-040G-MD  XG-140G-MD(lan4 wan)
+  XG-040G-MD  XG-140G-MD(pon0 wan)
 
 不带USB设备: 
-  XG-040G-TF  XG-140G-TF(lan4 wan)
+  XG-040G-TF  XG-140G-TF(pon0 wan)
 
-https://github.com/bingoguo93/immortalwrt.git
+
 
 # 恢复MAC地址说明
 刷机前必须备份所有原厂分区，特别是ri和bosa分区，参考详细说明刷回备份
