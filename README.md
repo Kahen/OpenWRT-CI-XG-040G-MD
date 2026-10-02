@@ -14,13 +14,11 @@ https://www.right.com.cn/forum/thread-8453612-1-1.html
 不带USB设备: 
   XG-040G-TF  XG-140G-TF(pon0 wan)
 
-
-
-# 恢复MAC地址说明
+## 恢复MAC地址说明
 刷机前必须备份所有原厂分区，特别是ri和bosa分区，参考详细说明刷回备份
 
 
-# 固件简要说明
+## 固件简要说明
 
 固件每天早上5点自动编译。
 
@@ -28,7 +26,7 @@ https://www.right.com.cn/forum/thread-8453612-1-1.html
 
 贝尔040系列，140系列。
 
-# 目录简要说明
+## 目录简要说明
 
 workflows——自定义CI配置
 
