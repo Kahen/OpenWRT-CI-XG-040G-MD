@@ -208,7 +208,8 @@ jobs:
         if: env.WRT_CONFIG == 'AIROHA-MAIN' && env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
-          make target/linux/compile -j"$(nproc)" V=s
+          # Top-level prepare builds host tools, toolchain and kernel in dependency order.
+          make prepare -j"$(nproc)" V=s
           python3 "$GITHUB_WORKSPACE/Scripts/UBI.py" kernel .
 
       - name: Compile Firmware
