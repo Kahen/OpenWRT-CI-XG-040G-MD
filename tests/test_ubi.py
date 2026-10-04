@@ -62,8 +62,9 @@ class GuardTests(unittest.TestCase):
 
     def test_hidden_fitblk_in_per_device_rootfs_is_accepted(self):
         text = self.valid_config().replace("CONFIG_PACKAGE_fitblk=y", "CONFIG_PACKAGE_fitblk=m")
-        self.write(".config", text + "CONFIG_TARGET_PER_DEVICE_ROOTFS=y\nCONFIG_MODULE_DEFAULT_fitblk=m\n")
-        ubi.check_config(self.source)
+        for selection in ("m", "y"):
+            self.write(".config", text + f"CONFIG_TARGET_PER_DEVICE_ROOTFS=y\nCONFIG_MODULE_DEFAULT_fitblk={selection}\n")
+            ubi.check_config(self.source)
         self.write(".config", text)
         with self.assertRaisesRegex(RuntimeError, "fitblk"):
             ubi.check_config(self.source)

@@ -83,7 +83,7 @@ def check_config(source):
     fitblk = resolved.get("CONFIG_PACKAGE_fitblk")
     require(fitblk == "y" or (fitblk == "m"
             and resolved.get("CONFIG_TARGET_PER_DEVICE_ROOTFS") == "y"
-            and resolved.get("CONFIG_MODULE_DEFAULT_fitblk") == "m"),
+            and resolved.get("CONFIG_MODULE_DEFAULT_fitblk") in ("m", "y")),
             "fitblk is not selected for the UBI device rootfs")
     selected = [key for key, value in resolved.items()
                 if key.startswith("CONFIG_TARGET_DEVICE_") and value == "y"]
