@@ -66,7 +66,7 @@ UBI 打包保留上游原始固件名称及构建信息，不混入其他设备�
 **原厂/TCBOOT/非 UBI 设备不能直接刷本 Release 的 sysupgrade 镜像。**
 UBI profile 使用不同分区布局、UBI 内核卷和兼容 U-Boot；仅换固件文件名不会完成迁移。
 首次迁移应使用适配 XG-040G-MD 的工具/流程，例如核验版本与设备兼容性的
-[MedveFlasher](https://github.com/Anime4000/MedveFlasher)，单独核对 bootloader 的 SkyHigh 支持。
+[MedveFlasher](https://github.com/Medvedolog/nokia-router-medveflasher)，单独核对 bootloader 的 SkyHigh 支持。
 
 迁移前必须备份**这台设备自身的全部原厂分区**，尤其 `ri`、`bosa`、MAC/校准信息和 bootloader，
 将备份保存到电脑并校验可读性与 SHA256；另一台同型号的备份不能替代。
