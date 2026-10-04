@@ -36,7 +36,9 @@ AIR-ONU 等其他入口保持各自用途，不等同于此 UBI 固件。
 
 构建继续使用 `Config/AIROHA-MAIN.txt` + `Config/GENERAL.txt`，保留 Argon、中文 LuCI、
 OpenClash、Lucky、NPU、USB 和通用包配置，增加显式 `fitblk` 与 UBI recovery initramfs。
-`make defconfig` 后检查实际生效的唯一设备及关键包；其他包被上游删除/改选的情况写入
+`make defconfig` 后检查实际生效的唯一设备及关键包。隐藏包 `fitblk` 可由设备默认包解析为 `m`，
+这表示按设备构建包；发布前还核验实际安装包清单，确保它与其他关键包确实在镜像内。
+其他包被上游删除/改选的情况写入
 `package-selection-changes.json`，不会默默宣称所有包完全一致。
 公开 ImmortalWrt `master` 与 bingoguo93 的 PON 分支功能不同，不保证后者专有的 PON/ONU 包可用。
 

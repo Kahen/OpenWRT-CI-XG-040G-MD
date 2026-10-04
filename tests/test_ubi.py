@@ -60,6 +60,14 @@ class GuardTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "luci-app-openclash"):
             ubi.check_config(self.source)
 
+    def test_hidden_fitblk_in_per_device_rootfs_is_accepted(self):
+        text = self.valid_config().replace("CONFIG_PACKAGE_fitblk=y", "CONFIG_PACKAGE_fitblk=m")
+        self.write(".config", text + "CONFIG_TARGET_PER_DEVICE_ROOTFS=y\nCONFIG_MODULE_DEFAULT_fitblk=m\n")
+        ubi.check_config(self.source)
+        self.write(".config", text)
+        with self.assertRaisesRegex(RuntimeError, "fitblk"):
+            ubi.check_config(self.source)
+
     def test_optional_package_loss_is_reported(self):
         text = self.valid_config()
         self.write(".config.requested", text + "CONFIG_PACKAGE_optional-test=y\n")
@@ -113,6 +121,8 @@ if (spinand->id.data[0] == 0x01)
             }}}))
         for name in ("config.buildinfo", "feeds.buildinfo", "version.buildinfo"):
             self.write(f"bin/targets/airoha/an7581/{name}", "test\n")
+        self.write(f"bin/targets/airoha/an7581/immortalwrt-{ubi.PROFILE}-squashfs.manifest",
+                   "".join(f"{key.removeprefix('CONFIG_PACKAGE_')} - 1.0\n" for key in ubi.CRITICAL))
         return image
 
     def test_image_checksum_mismatch_is_rejected(self):
@@ -142,6 +152,16 @@ if (spinand->id.data[0] == 0x01)
             digest, name = line.split("  ", 1)
             self.assertEqual(digest, ubi.sha256(output / name))
         self.assertTrue((output / "build-provenance.json").exists())
+
+    def test_fitblk_missing_from_image_is_rejected(self):
+        self.valid_images()
+        manifest = next((self.source / "bin/targets/airoha/an7581").glob("*.manifest"))
+        manifest.write_text(manifest.read_text().replace("fitblk - 1.0\n", ""))
+        def fwtool(args, check):
+            Path(args[2]).write_text(json.dumps({"supported_devices": [ubi.DEVICE]}))
+        with patch.object(ubi.subprocess, "run", side_effect=fwtool):
+            with self.assertRaisesRegex(RuntimeError, "missing from image.*fitblk"):
+                ubi.package(self.source)
 
 
 if __name__ == "__main__":

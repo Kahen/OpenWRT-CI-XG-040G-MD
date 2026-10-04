@@ -320,3 +320,16 @@ jobs:
 
             内核版本：${{env.WRT_KVER}}
             插件列表：${{env.WRT_LIST}}
+
+      - name: Upload UBI failure diagnostics
+        if: failure() && env.WRT_CONFIG == 'AIROHA-MAIN'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UBI-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            ./wrt/.config
+            ./wrt/.config.requested
+            ./wrt/package-selection-changes.json
+            ./wrt/skyhigh-verification.json
+          if-no-files-found: warn

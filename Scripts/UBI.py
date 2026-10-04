@@ -75,8 +75,16 @@ def install(source):
 def check_config(source):
     resolved = config(source / ".config")
     for symbol in ("CONFIG_TARGET_airoha", "CONFIG_TARGET_airoha_an7581", SYMBOL,
-                   "CONFIG_TARGET_ROOTFS_INITRAMFS", *sorted(CRITICAL)):
+                   "CONFIG_TARGET_ROOTFS_INITRAMFS", *sorted(CRITICAL - {"CONFIG_PACKAGE_fitblk"})):
         require(resolved.get(symbol) == "y", f"Required selection dropped by defconfig: {symbol}")
+    # fitblk is HIDDEN: Kconfig ignores a user's '=y' and selects it via
+    # MODULE_DEFAULT_fitblk for a per-device image. 'm' means build the package,
+    # not a loadable kernel driver. Verify installation in the final manifest.
+    fitblk = resolved.get("CONFIG_PACKAGE_fitblk")
+    require(fitblk == "y" or (fitblk == "m"
+            and resolved.get("CONFIG_TARGET_PER_DEVICE_ROOTFS") == "y"
+            and resolved.get("CONFIG_MODULE_DEFAULT_fitblk") == "m"),
+            "fitblk is not selected for the UBI device rootfs")
     selected = [key for key, value in resolved.items()
                 if key.startswith("CONFIG_TARGET_DEVICE_") and value == "y"]
     require(selected == [SYMBOL], f"Unexpected devices selected: {selected}")
@@ -152,8 +160,13 @@ def package(source):
     require(len(recovery) == 1, "Expected one UBI recovery image")
     check_fit(recovery[0])
     shutil.copy2(recovery[0], output / recovery[0].name)
-    for path in target.glob(f"*-{PROFILE}*.manifest"):
-        shutil.copy2(path, output / path.name)
+    manifests = list(target.glob(f"*-{PROFILE}*.manifest"))
+    require(len(manifests) == 1, "Expected one UBI installed-package manifest")
+    installed = {line.split(" - ", 1)[0] for line in manifests[0].read_text(encoding="utf-8").splitlines()}
+    required_packages = {key.removeprefix("CONFIG_PACKAGE_") for key in CRITICAL}
+    require(required_packages <= installed,
+            f"Critical packages missing from image: {sorted(required_packages - installed)}")
+    shutil.copy2(manifests[0], output / manifests[0].name)
     for name in ("profiles.json", "config.buildinfo", "feeds.buildinfo", "version.buildinfo"):
         shutil.copy2(target / name, output / name)
     for name in ("package-selection-changes.json", "skyhigh-verification.json"):
