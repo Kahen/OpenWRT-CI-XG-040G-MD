@@ -2,7 +2,7 @@
 # Copyright (C) 2026 VIKINGYFY
 
 #CI项目
-name: AIR-MAIN
+name: AIR-UBI
 
 #CI计划
 on:
@@ -25,11 +25,18 @@ on:
         type: boolean
 
 #CI权限
-permissions: write-all
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: air-ubi-${{ github.ref }}
+  cancel-in-progress: false
 
 #CI任务
 jobs:
   config:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     name: ${{matrix.CONFIG}}
     strategy:
       fail-fast: false
@@ -65,4 +72,4 @@ jobs:
       #插件调整
       WRT_PACKAGE: ${{inputs.PACKAGE}}
       #仅输出配置文件
-      WRT_TEST: ${{inputs.TEST}}
+      WRT_TEST: ${{ inputs.TEST || false }}
