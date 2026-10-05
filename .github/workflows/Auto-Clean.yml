@@ -24,4 +24,5 @@ jobs:
           releases_keep_latest: 0
           delete_tags: true
           delete_workflows: true
-          workflows_keep_day: 0
+          #保留最近7天的构建记录和日志，方便排查失败原因
+          workflows_keep_day: 7
