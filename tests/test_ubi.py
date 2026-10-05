@@ -60,6 +60,12 @@ class GuardTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "luci-app-openclash"):
             ubi.check_config(self.source)
 
+    def test_nopon_build_cannot_skip_its_policy(self):
+        self.valid_config()
+        with patch.dict(ubi.os.environ, {"WRT_CONFIG": "AIROHA-UBI-NOPON"}):
+            with self.assertRaisesRegex(RuntimeError, "No-PON policy missing"):
+                ubi.check_config(self.source)
+
     def test_hidden_fitblk_in_per_device_rootfs_is_accepted(self):
         text = self.valid_config().replace("CONFIG_PACKAGE_fitblk=y", "CONFIG_PACKAGE_fitblk=m")
         for selection in ("m", "y"):

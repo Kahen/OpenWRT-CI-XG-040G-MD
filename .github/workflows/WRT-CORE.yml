@@ -34,6 +34,10 @@ on:
       WRT_BRANCH:
         required: true
         type: string
+      WRT_REVISION:
+        required: false
+        type: string
+        default: ''
       WRT_SOURCE:
         required: true
         type: string
@@ -56,6 +60,8 @@ env:
   WRT_PW: ${{inputs.WRT_PW}}
   WRT_REPO: ${{inputs.WRT_REPO}}
   WRT_BRANCH: ${{inputs.WRT_BRANCH}}
+  WRT_REVISION: ${{inputs.WRT_REVISION}}
+  WRT_UBI: ${{ inputs.WRT_CONFIG == 'AIROHA-MAIN' || inputs.WRT_CONFIG == 'AIROHA-UBI-NOPON' }}
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
@@ -82,7 +88,7 @@ jobs:
           sudo -E apt -yqq autoremove --purge
           sudo -E apt -yqq autoclean
           sudo -E apt -yqq clean
-          sudo -E apt -yqq install dos2unix libfuse-dev
+          sudo -E apt -yqq install dos2unix libfuse-dev device-tree-compiler
           curl --fail --location --retry 3 https://build-scripts.immortalwrt.org/init_build_environment.sh -o /tmp/immortalwrt-init.sh
           sudo bash /tmp/immortalwrt-init.sh
           sudo -E systemctl daemon-reload
@@ -107,6 +113,12 @@ jobs:
       - name: Clone Code
         run: |
           git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" ./wrt/
+          if [[ -n "$WRT_REVISION" ]]; then
+            [[ "$WRT_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected a full source commit SHA'; exit 1; }
+            git -C ./wrt fetch --depth=1 origin "$WRT_REVISION"
+            git -C ./wrt checkout --detach FETCH_HEAD
+            [[ "$(git -C ./wrt rev-parse HEAD)" == "$WRT_REVISION" ]]
+          fi
 
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%H')" >> "$GITHUB_ENV"
 
@@ -116,8 +128,12 @@ jobs:
             sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
           fi
 
+      - name: Prepare Ethernet-only UBI source
+        if: env.WRT_CONFIG == 'AIROHA-UBI-NOPON'
+        run: python3 Scripts/NoPON.py prepare wrt
+
       - name: Install SkyHigh Robust Read workaround
-        if: env.WRT_CONFIG == 'AIROHA-MAIN'
+        if: env.WRT_UBI == 'true'
         run: python3 Scripts/UBI.py install wrt
 
       - name: Check Scripts
@@ -186,13 +202,13 @@ jobs:
 
           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
 
-          if [[ "$WRT_CONFIG" == 'AIROHA-MAIN' ]]; then
+          if [[ "$WRT_UBI" == 'true' ]]; then
             # GENERAL.txt disables initramfs; UBI also needs a recovery FIT.
             echo 'CONFIG_TARGET_ROOTFS_INITRAMFS=y' >> .config
           fi
           cp .config .config.requested
           make defconfig -j"$(nproc)"
-          if [[ "$WRT_CONFIG" == 'AIROHA-MAIN' ]]; then
+          if [[ "$WRT_UBI" == 'true' ]]; then
             python3 "$GITHUB_WORKSPACE/Scripts/UBI.py" config .
           fi
           make clean -j"$(nproc)"
@@ -205,7 +221,7 @@ jobs:
           make download -j"$(nproc)"
 
       - name: Build and verify SkyHigh kernel
-        if: env.WRT_CONFIG == 'AIROHA-MAIN' && env.WRT_TEST != 'true'
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
           # Top-level prepare builds host tools, toolchain and kernel in dependency order.
@@ -232,13 +248,16 @@ jobs:
           echo "======================="
 
       - name: Package Firmware
-        if: env.WRT_CONFIG != 'AIROHA-MAIN' || env.WRT_TEST == 'true'
+        if: env.WRT_UBI != 'true' || env.WRT_TEST == 'true'
         run: |
           cd ./wrt/ && mkdir ./upload/
 
           cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
-          if [[ "$WRT_CONFIG" == 'AIROHA-MAIN' ]]; then
+          if [[ "$WRT_UBI" == 'true' ]]; then
             cp package-selection-changes.json ./upload/
+            if [[ "$WRT_CONFIG" == 'AIROHA-UBI-NOPON' ]]; then
+              cp nopon-verification.json ./upload/
+            fi
           fi
 
           if [[ $WRT_TEST != 'true' ]]; then
@@ -260,7 +279,7 @@ jobs:
           fi
 
       - name: Validate and package UBI firmware
-        if: env.WRT_CONFIG == 'AIROHA-MAIN' && env.WRT_TEST != 'true'
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true'
         run: python3 Scripts/UBI.py package wrt
 
       - name: Upload build artifacts
@@ -271,15 +290,17 @@ jobs:
           if-no-files-found: error
 
       - name: Release UBI firmware
-        if: env.WRT_CONFIG == 'AIROHA-MAIN' && env.WRT_TEST != 'true'
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: UBI-${{ env.WRT_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
+          tag_name: ${{ env.WRT_CONFIG == 'AIROHA-UBI-NOPON' && 'UBI-NOPON-bingoguo93-6.18' || 'UBI' }}-${{ env.WRT_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
           target_commitish: ${{ github.sha }}
           fail_on_unmatched_files: true
           files: ./wrt/upload/*
           body: |
             Nokia XG-040G-MD all-in-UBI：nokia_xg-040g-md-ubi
+            构建类型：${{ env.WRT_CONFIG }}
+            ${{ env.WRT_CONFIG == 'AIROHA-UBI-NOPON' && '无 PON 版：光口不启用；LAN1/LAN2/LAN3 为 LAN，LAN4 为 WAN。' || '主线 ImmortalWrt UBI 版；不是 AIR-ONU PonWrt 固件。' }}
             Linux SkyHigh Robust Read workaround 已检查普通读与连续读路径。
             升级文件：*-nokia_xg-040g-md-ubi-squashfs-sysupgrade.itb
             recovery.itb 是 RAM 恢复镜像；不是持久升级文件。
@@ -293,7 +314,7 @@ jobs:
             登录地址：${{ env.WRT_IP }}；密码：${{ env.WRT_PW }}（首次登录请设置密码）
 
       - name: Release Firmware
-        if: env.WRT_CONFIG != 'AIROHA-MAIN' && env.WRT_TEST != 'true'
+        if: env.WRT_UBI != 'true' && env.WRT_TEST != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
@@ -323,7 +344,7 @@ jobs:
             插件列表：${{env.WRT_LIST}}
 
       - name: Upload UBI failure diagnostics
-        if: failure() && env.WRT_CONFIG == 'AIROHA-MAIN'
+        if: failure() && env.WRT_UBI == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: UBI-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
@@ -333,4 +354,5 @@ jobs:
             ./wrt/.config.requested
             ./wrt/package-selection-changes.json
             ./wrt/skyhigh-verification.json
+            ./wrt/nopon-verification.json
           if-no-files-found: warn

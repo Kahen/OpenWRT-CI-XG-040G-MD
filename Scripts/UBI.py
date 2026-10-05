@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import struct
@@ -73,6 +74,9 @@ def install(source):
 
 
 def check_config(source):
+    if no_pon(source):
+        require((source / "nopon-verification.json").exists(), "No-PON policy missing from this build")
+        subprocess.run(["python3", str(REPO / "Scripts/NoPON.py"), "config", str(source)], check=True)
     resolved = config(source / ".config")
     for symbol in ("CONFIG_TARGET_airoha", "CONFIG_TARGET_airoha_an7581", SYMBOL,
                    "CONFIG_TARGET_ROOTFS_INITRAMFS", *sorted(CRITICAL - {"CONFIG_PACKAGE_fitblk"})):
@@ -131,9 +135,15 @@ def check_fit(path):
     require(magic == 0xD00DFEED and 40 <= size <= len(data), f"Invalid FIT image: {path}")
 
 
+def no_pon(source):
+    return os.environ.get("WRT_CONFIG") == "AIROHA-UBI-NOPON" or (source / "nopon-verification.json").exists()
+
+
 def package(source):
     check_config(source)
     check_kernel(source)
+    if no_pon(source):
+        subprocess.run(["python3", str(REPO / "Scripts/NoPON.py"), "image", str(source)], check=True)
     target = source / "bin/targets/airoha/an7581"
     profiles_file = target / "profiles.json"
     profiles = json.loads(profiles_file.read_text(encoding="utf-8"))
@@ -171,11 +181,14 @@ def package(source):
         shutil.copy2(target / name, output / name)
     for name in ("package-selection-changes.json", "skyhigh-verification.json"):
         shutil.copy2(source / name, output / name)
+    if no_pon(source):
+        shutil.copy2(source / "nopon-verification.json", output / "nopon-verification.json")
     shutil.copy2(source / ".config", output / "build.config")
     provenance = {
         "source_commit": subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip(),
         "ci_commit": subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip(),
         "profile": PROFILE, "sysupgrade": image.name, "recovery": recovery[0].name,
+        "variant": "ubi-nopon" if no_pon(source) else "ubi",
         "patch_sha256": sha256(REPO / "Patches/airoha-6.18" / PATCH),
     }
     (output / "build-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")

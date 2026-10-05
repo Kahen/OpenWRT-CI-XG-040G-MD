@@ -8,6 +8,32 @@ Robust Read workaround，并在所有检查通过后发布 GitHub Release。
 旧 **AIR-TCBOOT** 保留为手动兼容入口，不再自动构建；它不是本项目的 UBI 升级路径。
 AIR-ONU 等其他入口保持各自用途，不等同于此 UBI 固件。
 
+## bingoguo93 6.18 无 PON 的 UBI 版本
+
+新增 **AIR-UBI-NOPON**，基于用户指定的
+[2026-10-05 TCBOOT Release](https://github.com/Kahen/OpenWRT-CI-XG-040G-MD/releases/tag/AIROHA-TCBOOT-bingoguo93-6.18-26.10.05-03.54.19)
+所使用的 `bingoguo93/immortalwrt` **6.18** 分支，固定源码提交
+`f0de31b737890e456c144fa08de34451b40036d8`，内核 **6.18.52**。
+它使用该源码已有的 **`nokia_xg-040g-md-ubi`** profile 和主线 all-in-UBI 设备树，
+不是把 TCBOOT 的 factory.bin 改名，也不使用 NWRT/TCBOOT 分区和升级流程。
+
+- **不启用光口 PON**：移除 `pon_drivers` / `pon_userspace` feeds 和 PON 身份初始化脚本；
+  禁用设备树中的 xpon_mac、pon_pcs 和 gdm2；解析后的配置及实际镜像中不得出现 PON 包。
+- 默认 **LAN1/LAN2/LAN3 为 LAN，LAN4 为 WAN**；LAN1 保持 2.5G LAN，USB 和 NPU 保留。
+- 保留 `GENERAL.txt` 中的普通插件配置、Argon、中文 LuCI、OpenClash、Lucky、NPU 和 i2c-tools。
+  PON feed 提供的功能不随此镜像安装；请求包的实际变化仍记录在 `package-selection-changes.json`。
+- 使用现有 SkyHigh Robust Read 修复及 UBI 镜像校验；发布前额外检查**编译后的设备树**和实际包清单。
+  固定的源码中仍有 PON 相关内核补丁，但本镜像不启用光口、PON 驱动包或 PON 用户态组件。
+- 此构建与 AIR-UBI、AIR-ONU、AIR-TCBOOT 并存；自动任务重新构建同一固定源码，不会自动切换到未知版本。
+
+构建入口：**Actions → AIR-UBI-NOPON**，`TEST=false` 构建并发布，`TEST=true` 只检查配置。
+修复分支上针对该构建的 push 自动启动一次完整构建；合并后跟随 Auto-Clean 定时构建。
+完整构建通过后，下载 **`UBI-NOPON-bingoguo93-6.18-…` Release** 中的
+**`*-nokia_xg-040g-md-ubi-squashfs-sysupgrade.itb`**。
+`nopon-verification.json` 记录源码、无 PON 配置、网口、设备树和已安装包的检查结果。
+仅适用于已经迁移到兼容 U-Boot/all-in-UBI 布局的 XG-040G-MD；首次切换建议备份后不保留配置，
+以应用 LAN4=WAN 的默认设置。设备上的 `sysupgrade -T` 必须通过，不能强刷。
+
 ## SkyHigh 修复及范围
 
 - 补丁随仓库保存于 `Patches/airoha-6.18/600-mtd-spinand-add-skyhigh-robust-read-workaround.patch`，
@@ -31,7 +57,7 @@ AIR-ONU 等其他入口保持各自用途，不等同于此 UBI 固件。
 3. `PACKAGE` 仍支持以字面 `\n` 分隔的包配置。`Config/PRIVATE.txt`、`Scripts/PRIVATE.sh` 扩展入口保留。
    设备选择和关键包不可通过这些入口绕过校验。
 4. 每天北京时间 **01:00** 的 Auto-Clean 完成且成功后触发自动编译，编译完成时间取决于上游和 runner。
-   清理保留最近 10 个 Releases 和最近 14 天运行日志，不再先清空所有版本。
+   清理保留最近 10 个 Releases 和最近 7 天运行日志，不再先清空所有版本。
 5. 完整构建通过后，下载 `UBI-…` Release，或对应运行的 `AIROHA-MAIN-…` artifact。
 
 构建继续使用 `Config/AIROHA-MAIN.txt` + `Config/GENERAL.txt`，保留 Argon、中文 LuCI、

@@ -19,6 +19,6 @@ jobs:
       - name: Check script syntax
         run: |
           for script in Scripts/*.sh; do bash -n "$script"; done
-          python3 -m py_compile Scripts/UBI.py
+          python3 -m py_compile Scripts/UBI.py Scripts/NoPON.py
       - name: Test UBI build and release guards
         run: python3 -m unittest discover -s tests -v
