@@ -74,16 +74,16 @@ class NoPONTests(unittest.TestCase):
     def test_compiled_optical_node_must_be_disabled(self):
         self.prepare()
         self.write(".config", "CONFIG_PACKAGE_kmod-usb3=m\n")
-        self.write("bin/targets/airoha/an7581/immortalwrt-nokia_xg-040g-md-ubi.manifest",
-                   "kmod-usb3 - 1\nkmod-regulator-userspace-consumer - 1\n")
+        manifest = self.write("final-image.manifest",
+                              "kmod-usb3 - 1\nkmod-regulator-userspace-consumer - 1\n")
         self.write("build_dir/target-test/linux-airoha_an7581/image-an7581-nokia_xg-040g-md-ubi.dtb", "test")
         with patch.object(nopon.shutil, "which", return_value="fdtget"), \
              patch.object(nopon.subprocess, "check_output", return_value="okay\n"):
             with self.assertRaisesRegex(RuntimeError, "PON path active"):
-                nopon.check_image(self.source)
+                nopon.check_image(self.source, manifest)
         with patch.object(nopon.shutil, "which", return_value="fdtget"), \
              patch.object(nopon.subprocess, "check_output", return_value="disabled\n"):
-            nopon.check_image(self.source)
+            nopon.check_image(self.source, manifest)
         report = json.loads((self.source / nopon.POLICY).read_text())
         self.assertIn("installed_manifest_sha256", report)
 

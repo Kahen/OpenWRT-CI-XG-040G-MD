@@ -96,12 +96,9 @@ def check_manifest(path):
             "USB support missing from the XG-040G-MD image")
 
 
-def check_image(source):
+def check_image(source, manifest):
     check_config(source)
-    target = source / "bin/targets/airoha/an7581"
-    manifests = list(target.glob("*-nokia_xg-040g-md-ubi*.manifest"))
-    require(len(manifests) == 1, "Expected one No-PON image manifest")
-    check_manifest(manifests[0])
+    check_manifest(manifest)
     dtbs = list((source / "build_dir").glob(
         "target-*/linux-airoha_an7581/image-an7581-nokia_xg-040g-md-ubi.dtb"))
     require(dtbs, "Missing compiled UBI device tree")
@@ -113,7 +110,7 @@ def check_image(source):
             require(status == "disabled", f"PON path active in compiled device tree: {node}")
     report = json.loads((source / POLICY).read_text())
     report["compiled_device_trees"] = {dtb.name: digest(dtb) for dtb in dtbs}
-    report["installed_manifest_sha256"] = digest(manifests[0])
+    report["installed_manifest_sha256"] = digest(manifest)
     (source / POLICY).write_text(json.dumps(report, indent=2) + "\n")
     print("Installed packages and compiled No-PON device tree verified")
 
@@ -122,8 +119,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("prepare", "config", "image"))
     parser.add_argument("source", type=Path)
+    parser.add_argument("--manifest", type=Path, help="Installed manifest extracted from final sysupgrade FIT")
     args = parser.parse_args()
-    {"prepare": prepare, "config": check_config, "image": check_image}[args.operation](args.source.resolve())
+    if args.operation == "image":
+        if args.manifest is None:
+            parser.error("image requires --manifest from the final sysupgrade FIT")
+        check_image(args.source.resolve(), args.manifest.resolve())
+    else:
+        {"prepare": prepare, "config": check_config}[args.operation](args.source.resolve())
 
 
 if __name__ == "__main__":

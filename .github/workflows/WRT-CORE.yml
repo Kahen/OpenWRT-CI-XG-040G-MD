@@ -235,6 +235,16 @@ jobs:
 
           make -j"$(nproc)" || make -j1 V=s
 
+      - name: Save compiled UBI tools before packaging
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true' && steps.check-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir/host*
+            ./wrt/staging_dir/tool*
+
       - name: Machine Information
         run: |
           cd ./wrt/
@@ -355,4 +365,9 @@ jobs:
             ./wrt/package-selection-changes.json
             ./wrt/skyhigh-verification.json
             ./wrt/nopon-verification.json
+            ./wrt/bin/targets/airoha/an7581/*.itb
+            ./wrt/bin/targets/airoha/an7581/*.manifest
+            ./wrt/bin/targets/airoha/an7581/*.json
+            ./wrt/bin/targets/airoha/an7581/*.buildinfo
+            ./wrt/build_dir/target-*/linux-airoha_an7581/image-an7581-nokia_xg-040g-md-ubi.dtb
           if-no-files-found: warn

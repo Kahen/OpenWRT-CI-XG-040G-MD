@@ -135,6 +135,65 @@ def check_fit(path):
     require(magic == 0xD00DFEED and 40 <= size <= len(data), f"Invalid FIT image: {path}")
 
 
+def installed_packages(database, apk):
+    """Read the installed database, not the global pre-device rootfs manifest."""
+    packages = {}
+    for record in re.split(r"\n\s*\n", database.strip()):
+        fields = {}
+        for line in record.splitlines():
+            key, separator, value = line.partition(":" if apk else ": ")
+            if separator:
+                fields[key] = value
+        if not apk and fields.get("Status") != "install ok installed":
+            continue
+        name = fields.get("P" if apk else "Package", "")
+        version = fields.get("V" if apk else "Version", "")
+        require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.-]*", name)
+                and re.fullmatch(r"\S+", version), "Invalid installed-package database record")
+        require(name not in packages, f"Duplicate installed package: {name}")
+        packages[name] = version
+    require(packages, "Installed-package database is empty")
+    return packages
+
+
+def image_manifest(source, image, destination):
+    fdtget = shutil.which("fdtget")
+    require(fdtget, "Install device-tree-compiler to inspect the final FIT rootfs")
+    unsquashfs = source / "staging_dir/host/bin/unsquashfs4"
+    require(unsquashfs.is_file(), "Missing compiled host unsquashfs4 tool")
+
+    def property_value(node, prop, kind="s"):
+        return subprocess.check_output(
+            [fdtget, "-t", kind, str(image), node, prop], text=True).strip()
+
+    nodes = subprocess.check_output([fdtget, "-l", str(image), "/images"], text=True).splitlines()
+    rootfs = [node for node in nodes if re.fullmatch(r"rootfs[-@]\d+", node)]
+    require(len(rootfs) == 1, "Expected one rootfs in the UBI sysupgrade FIT")
+    node = "/images/" + rootfs[0]
+    require(property_value(node, "type") == "filesystem"
+            and property_value(node, "compression") == "none", "Unsupported FIT rootfs format")
+    offset_text = property_value(node, "data-position", "u")
+    size_text = property_value(node, "data-size", "u")
+    require(offset_text.isdecimal() and size_text.isdecimal(), "Invalid external FIT rootfs location")
+    offset, size = int(offset_text), int(size_text)
+    with image.open("rb") as firmware:
+        header = firmware.read(8)
+        fit_size = struct.unpack(">II", header)[1]
+        require(offset >= fit_size and size >= 96 and offset + size <= image.stat().st_size,
+                "FIT rootfs is outside the sysupgrade image")
+        firmware.seek(offset)
+        require(firmware.read(4) == b"hsqs", "FIT rootfs is not SquashFS")
+    apk = config(source / ".config").get("CONFIG_USE_APK") == "y"
+    database_path = "lib/apk/db/installed" if apk else "usr/lib/opkg/status"
+    database = subprocess.check_output(
+        [str(unsquashfs), "-cat", "-offset", str(offset), str(image), database_path], text=True)
+    packages = installed_packages(database, apk)
+    destination.write_text("".join(f"{name} - {packages[name]}\n" for name in sorted(packages)),
+                           encoding="utf-8")
+    print(f"Verified {len(packages)} installed packages from final FIT SquashFS ({database_path})")
+    return destination
+
+
 def no_pon(source):
     return os.environ.get("WRT_CONFIG") == "AIROHA-UBI-NOPON" or (source / "nopon-verification.json").exists()
 
@@ -142,8 +201,6 @@ def no_pon(source):
 def package(source):
     check_config(source)
     check_kernel(source)
-    if no_pon(source):
-        subprocess.run(["python3", str(REPO / "Scripts/NoPON.py"), "image", str(source)], check=True)
     target = source / "bin/targets/airoha/an7581"
     profiles_file = target / "profiles.json"
     profiles = json.loads(profiles_file.read_text(encoding="utf-8"))
@@ -165,18 +222,20 @@ def package(source):
     subprocess.run([str(source / "staging_dir/host/bin/fwtool"), "-i", str(metadata_file), str(image)], check=True)
     metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
     require(DEVICE in metadata.get("supported_devices", []), "Firmware metadata is not for this UBI device")
+    manifest_name = name.removesuffix("-sysupgrade.itb") + ".manifest"
+    manifest = image_manifest(source, image, output / manifest_name)
+    installed = {line.split(" - ", 1)[0] for line in manifest.read_text(encoding="utf-8").splitlines()}
+    required_packages = {key.removeprefix("CONFIG_PACKAGE_") for key in CRITICAL}
+    require(required_packages <= installed,
+            f"Critical packages missing from image: {sorted(required_packages - installed)}")
+    if no_pon(source):
+        subprocess.run(["python3", str(REPO / "Scripts/NoPON.py"), "image", str(source),
+                        "--manifest", str(manifest)], check=True)
     shutil.copy2(image, output / image.name)
     recovery = list(target.glob(f"*-{PROFILE}-initramfs-recovery.itb"))
     require(len(recovery) == 1, "Expected one UBI recovery image")
     check_fit(recovery[0])
     shutil.copy2(recovery[0], output / recovery[0].name)
-    manifests = list(target.glob(f"*-{PROFILE}*.manifest"))
-    require(len(manifests) == 1, "Expected one UBI installed-package manifest")
-    installed = {line.split(" - ", 1)[0] for line in manifests[0].read_text(encoding="utf-8").splitlines()}
-    required_packages = {key.removeprefix("CONFIG_PACKAGE_") for key in CRITICAL}
-    require(required_packages <= installed,
-            f"Critical packages missing from image: {sorted(required_packages - installed)}")
-    shutil.copy2(manifests[0], output / manifests[0].name)
     for name in ("profiles.json", "config.buildinfo", "feeds.buildinfo", "version.buildinfo"):
         shutil.copy2(target / name, output / name)
     for name in ("package-selection-changes.json", "skyhigh-verification.json"):

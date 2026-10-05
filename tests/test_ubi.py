@@ -113,12 +113,14 @@ if (spinand->id.data[0] == 0x01)
 
     def valid_images(self):
         self.valid_config()
+        text = (self.source / ".config").read_text().replace("CONFIG_PACKAGE_fitblk=y", "CONFIG_PACKAGE_fitblk=m")
+        self.write(".config", text + "CONFIG_USE_APK=y\nCONFIG_TARGET_PER_DEVICE_ROOTFS=y\nCONFIG_MODULE_DEFAULT_fitblk=y\n")
         self.prepared_kernel()
         target = self.source / "bin/targets/airoha/an7581"
         target.mkdir(parents=True)
         name = f"immortalwrt-airoha-an7581-{ubi.PROFILE}-squashfs-sysupgrade.itb"
         image = target / name
-        image.write_bytes(struct.pack(">II", 0xD00DFEED, 40) + bytes(32))
+        image.write_bytes(struct.pack(">II", 0xD00DFEED, 40) + bytes(4088) + b"hsqs" + bytes(92))
         recovery = target / f"immortalwrt-airoha-an7581-{ubi.PROFILE}-initramfs-recovery.itb"
         recovery.write_bytes(image.read_bytes())
         self.write("bin/targets/airoha/an7581/profiles.json", json.dumps({
@@ -128,9 +130,23 @@ if (spinand->id.data[0] == 0x01)
             }}}))
         for name in ("config.buildinfo", "feeds.buildinfo", "version.buildinfo"):
             self.write(f"bin/targets/airoha/an7581/{name}", "test\n")
-        self.write(f"bin/targets/airoha/an7581/immortalwrt-{ubi.PROFILE}-squashfs.manifest",
-                   "".join(f"{key.removeprefix('CONFIG_PACKAGE_')} - 1.0\n" for key in ubi.CRITICAL))
+        # image.mk writes the generic manifest before per-device packages are added.
+        self.write("bin/targets/airoha/an7581/immortalwrt-airoha-an7581.manifest",
+                   "".join(f"{key.removeprefix('CONFIG_PACKAGE_')} - 1.0\n"
+                           for key in ubi.CRITICAL - {"CONFIG_PACKAGE_fitblk"}))
+        self.write("staging_dir/host/bin/unsquashfs4", "test tool\n")
         return image
+
+    def image_tools(self, args, **kwargs):
+        if args[0] == "git":
+            return "test-commit\n"
+        if args[0].endswith("unsquashfs4"):
+            return "\n".join(f"P:{key.removeprefix('CONFIG_PACKAGE_')}\nV:1.0\n"
+                             for key in ubi.CRITICAL)
+        if "-l" in args:
+            return "kernel-1\nfdt-1\nrootfs-1\n"
+        return {"type": "filesystem", "compression": "none",
+                "data-position": "4096", "data-size": "96"}[args[-1]]
 
     def test_image_checksum_mismatch_is_rejected(self):
         image = self.valid_images()
@@ -151,7 +167,8 @@ if (spinand->id.data[0] == 0x01)
         def fwtool(args, check):
             Path(args[2]).write_text(json.dumps({"supported_devices": [ubi.DEVICE]}))
         with patch.object(ubi.subprocess, "run", side_effect=fwtool), \
-             patch.object(ubi.subprocess, "check_output", return_value="test-commit\n"):
+             patch.object(ubi.shutil, "which", return_value="fdtget"), \
+             patch.object(ubi.subprocess, "check_output", side_effect=self.image_tools):
             ubi.package(self.source)
         output = self.source / "upload"
         self.assertTrue((output / image.name).exists())
@@ -159,16 +176,48 @@ if (spinand->id.data[0] == 0x01)
             digest, name = line.split("  ", 1)
             self.assertEqual(digest, ubi.sha256(output / name))
         self.assertTrue((output / "build-provenance.json").exists())
+        manifest = next(output.glob("*.manifest"))
+        self.assertIn("fitblk - 1.0\n", manifest.read_text())
+        self.assertNotIn("fitblk", next(image.parent.glob("*.manifest")).read_text())
 
     def test_fitblk_missing_from_image_is_rejected(self):
         self.valid_images()
-        manifest = next((self.source / "bin/targets/airoha/an7581").glob("*.manifest"))
-        manifest.write_text(manifest.read_text().replace("fitblk - 1.0\n", ""))
+        def without_fitblk(args, **kwargs):
+            return self.image_tools(args, **kwargs).replace("P:fitblk\nV:1.0\n", "")
         def fwtool(args, check):
             Path(args[2]).write_text(json.dumps({"supported_devices": [ubi.DEVICE]}))
-        with patch.object(ubi.subprocess, "run", side_effect=fwtool):
+        with patch.object(ubi.subprocess, "run", side_effect=fwtool), \
+             patch.object(ubi.shutil, "which", return_value="fdtget"), \
+             patch.object(ubi.subprocess, "check_output", side_effect=without_fitblk):
             with self.assertRaisesRegex(RuntimeError, "missing from image.*fitblk"):
                 ubi.package(self.source)
+
+    def test_external_rootfs_bounds_are_checked(self):
+        image = self.valid_images()
+        def invalid_offset(args, **kwargs):
+            return "999999" if args[-1] == "data-position" else self.image_tools(args, **kwargs)
+        with patch.object(ubi.shutil, "which", return_value="fdtget"), \
+             patch.object(ubi.subprocess, "check_output", side_effect=invalid_offset):
+            with self.assertRaisesRegex(RuntimeError, "outside the sysupgrade"):
+                ubi.image_manifest(self.source, image, self.source / "image.manifest")
+
+    def test_wrong_rootfs_magic_is_rejected(self):
+        image = self.valid_images()
+        image.write_bytes(image.read_bytes().replace(b"hsqs", b"oops"))
+        with patch.object(ubi.shutil, "which", return_value="fdtget"), \
+             patch.object(ubi.subprocess, "check_output", side_effect=self.image_tools):
+            with self.assertRaisesRegex(RuntimeError, "not SquashFS"):
+                ubi.image_manifest(self.source, image, self.source / "image.manifest")
+
+    def test_apk_database_rejects_missing_or_duplicate_versions(self):
+        for database in ("P:fitblk\n", "P:fitblk\nV:1\n\nP:fitblk\nV:2\n"):
+            with self.assertRaises(RuntimeError):
+                ubi.installed_packages(database, apk=True)
+
+    def test_opkg_database_ignores_uninstalled_packages(self):
+        database = ("Package: fitblk\nVersion: 1.0-r1\nStatus: install ok installed\n\n"
+                    "Package: kmod-airoha-xpon\nVersion: 1.0\nStatus: deinstall ok config-files\n")
+        self.assertEqual(ubi.installed_packages(database, apk=False), {"fitblk": "1.0-r1"})
 
 
 if __name__ == "__main__":

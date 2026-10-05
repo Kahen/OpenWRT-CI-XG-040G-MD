@@ -86,6 +86,8 @@ OpenClash、Lucky、NPU、USB 和通用包配置，增加显式 `fitblk` 与 UBI
 
 发布前校验：唯一 UBI profile、普通/连续读 workaround、内建 SPI-NAND、FIT 头及长度、
 sysupgrade 与 `profiles.json` 的 SHA256、`fwtool` 提取的实际 `supported_devices`、recovery 镜像存在。
+设备包清单从最终 sysupgrade FIT 内的 SquashFS 安装数据库提取，包含每设备单独安装的 `fitblk`；
+不以编译目录中的全局 `.manifest` 判断设备实际装包。无 PON 版再使用这份设备清单检查 PON 包与 USB 支持。
 UBI 打包保留上游原始固件名称及构建信息，不混入其他设备镜像；**不发布 preloader / BL31 / U-Boot
 作为刷机附件**。这些检查不代替设备上的 `sysupgrade -T` 或实机验证。
 
