@@ -34,6 +34,10 @@ on:
       WRT_BRANCH:
         required: true
         type: string
+      WRT_REVISION:
+        required: false
+        type: string
+        default: ''
       WRT_SOURCE:
         required: true
         type: string
@@ -42,7 +46,8 @@ on:
         type: string
       WRT_TEST:
         required: false
-        type: string
+        type: boolean
+        default: false
 
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
@@ -55,6 +60,8 @@ env:
   WRT_PW: ${{inputs.WRT_PW}}
   WRT_REPO: ${{inputs.WRT_REPO}}
   WRT_BRANCH: ${{inputs.WRT_BRANCH}}
+  WRT_REVISION: ${{inputs.WRT_REVISION}}
+  WRT_UBI: ${{ inputs.WRT_CONFIG == 'AIROHA-MAIN' || inputs.WRT_CONFIG == 'AIROHA-UBI-NOPON' }}
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
@@ -62,10 +69,14 @@ env:
 jobs:
   core:
     name: ${{inputs.WRT_SOURCE}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout Projects
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
       - name: Initialization Environment
         env:
@@ -77,36 +88,53 @@ jobs:
           sudo -E apt -yqq autoremove --purge
           sudo -E apt -yqq autoclean
           sudo -E apt -yqq clean
-          sudo -E apt -yqq install dos2unix libfuse-dev
-          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo -E apt -yqq install dos2unix libfuse-dev device-tree-compiler
+          curl --fail --location --retry 3 https://build-scripts.immortalwrt.org/init_build_environment.sh -o /tmp/immortalwrt-init.sh
+          sudo bash /tmp/immortalwrt-init.sh
           sudo -E systemctl daemon-reload
           sudo -E timedatectl set-timezone "Asia/Shanghai"
 
           sudo mkdir -p /mnt/build_wrt
-          sudo chown $USER:$USER /mnt/build_wrt
-          sudo ln -s /mnt/build_wrt $GITHUB_WORKSPACE/wrt
+          sudo chown "$USER:$USER" /mnt/build_wrt
+          sudo ln -s /mnt/build_wrt "$GITHUB_WORKSPACE/wrt"
 
       - name: Initialization Values
         run: |
-          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
-          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
-          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
-          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
-          echo "WRT_WIFI=wifi-no" >> $GITHUB_ENV
-          echo "WRT_KVER=none" >> $GITHUB_ENV
-          echo "WRT_LIST=none" >> $GITHUB_ENV
+          {
+          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")"
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}"
+          echo "WRT_INFO=${WRT_SOURCE%%/*}"
+          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' "./Config/$WRT_CONFIG.txt")"
+          echo "WRT_WIFI=wifi-no"
+          echo "WRT_KVER=none"
+          echo "WRT_LIST=none"
+          } >> "$GITHUB_ENV"
 
       - name: Clone Code
         run: |
-          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
+          git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" ./wrt/
+          if [[ -n "$WRT_REVISION" ]]; then
+            [[ "$WRT_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected a full source commit SHA'; exit 1; }
+            git -C ./wrt fetch --depth=1 origin "$WRT_REVISION"
+            git -C ./wrt checkout --detach FETCH_HEAD
+            [[ "$(git -C ./wrt rev-parse HEAD)" == "$WRT_REVISION" ]]
+          fi
 
-          cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%H')" >> "$GITHUB_ENV"
 
           # GitHub Action 移除国内下载源
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
           if [ -f "$PROJECT_MIRRORS_FILE" ]; then
             sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
           fi
+
+      - name: Prepare Ethernet-only UBI source
+        if: env.WRT_CONFIG == 'AIROHA-UBI-NOPON'
+        run: python3 Scripts/NoPON.py prepare wrt
+
+      - name: Install SkyHigh Robust Read workaround
+        if: env.WRT_UBI == 'true'
+        run: python3 Scripts/UBI.py install wrt
 
       - name: Check Scripts
         run: |
@@ -115,7 +143,7 @@ jobs:
       - name: Check Caches
         id: check-cache
         if: env.WRT_TEST != 'true'
-        uses: actions/cache@main
+        uses: actions/cache@v4
         with:
           key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
           restore-keys: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}
@@ -142,7 +170,7 @@ jobs:
           if ${{steps.check-cache.outputs.cache-hit != 'true'}}; then
             CACHE_LIST=$(gh cache list --key "$WRT_CONFIG-$WRT_INFO" | cut -f 1)
             for CACHE_KEY in $CACHE_LIST; do
-              gh cache delete $CACHE_KEY
+              gh cache delete "$CACHE_KEY"
             done
 
             echo "caches cleanup done!"
@@ -159,36 +187,63 @@ jobs:
         run: |
           cd ./wrt/package/
 
-          $GITHUB_WORKSPACE/Scripts/Packages.sh
-          $GITHUB_WORKSPACE/Scripts/Handles.sh
+          "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          "$GITHUB_WORKSPACE/Scripts/Handles.sh"
 
       - name: Custom Settings
         run: |
           cd ./wrt/
 
           if [[ "${WRT_CONFIG,,}" == *"test"* ]]; then
-            cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt >> .config
+            cat "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" >> .config
           else
-            cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
+            cat "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" "$GITHUB_WORKSPACE/Config/GENERAL.txt" >> .config
           fi
 
-          $GITHUB_WORKSPACE/Scripts/Settings.sh
+          "$GITHUB_WORKSPACE/Scripts/Settings.sh"
 
-          make defconfig -j$(nproc) && make clean -j$(nproc)
+          if [[ "$WRT_UBI" == 'true' ]]; then
+            # GENERAL.txt disables initramfs; UBI also needs a recovery FIT.
+            echo 'CONFIG_TARGET_ROOTFS_INITRAMFS=y' >> .config
+          fi
+          cp .config .config.requested
+          make defconfig -j"$(nproc)"
+          if [[ "$WRT_UBI" == 'true' ]]; then
+            python3 "$GITHUB_WORKSPACE/Scripts/UBI.py" config .
+          fi
+          make clean -j"$(nproc)"
 
       - name: Download Packages
         if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
 
-          make download -j$(nproc)
+          make download -j"$(nproc)"
+
+      - name: Build and verify SkyHigh kernel
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          # Top-level prepare builds host tools, toolchain and kernel in dependency order.
+          make prepare -j"$(nproc)" V=s
+          python3 "$GITHUB_WORKSPACE/Scripts/UBI.py" kernel .
 
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
 
-          make -j$(nproc) || make -j1 V=s
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Save compiled UBI tools before packaging
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true' && steps.check-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir/host*
+            ./wrt/staging_dir/tool*
 
       - name: Machine Information
         run: |
@@ -203,38 +258,82 @@ jobs:
           echo "======================="
 
       - name: Package Firmware
+        if: env.WRT_UBI != 'true' || env.WRT_TEST == 'true'
         run: |
           cd ./wrt/ && mkdir ./upload/
 
           cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE".txt
+          if [[ "$WRT_UBI" == 'true' ]]; then
+            cp package-selection-changes.json ./upload/
+            if [[ "$WRT_CONFIG" == 'AIROHA-UBI-NOPON' ]]; then
+              cp nopon-verification.json ./upload/
+            fi
+          fi
 
           if [[ $WRT_TEST != 'true' ]]; then
-            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
-            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> "$GITHUB_ENV"
+            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> "$GITHUB_ENV"
 
             find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
 
-            for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*") ; do
-              EXT=$(basename $FILE | cut -d '.' -f 2-)
-              NAME=$(basename $FILE | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
+            while IFS= read -r -d '' FILE; do
+              EXT=$(basename "$FILE" | cut -d '.' -f 2-)
+              NAME=$(basename "$FILE" | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
               NEW_FILE="$NAME"-"$WRT_INFO"-"$WRT_BRANCH"-"$WRT_DATE"."$EXT"
-              mv -f $FILE ./upload/$NEW_FILE
-            done
+              mv -f "$FILE" "./upload/$NEW_FILE"
+            done < <(find ./bin/targets/ -type f -iname "*$WRT_TARGET*" -print0)
 
             find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
 
-            make clean -j$(nproc)
+            make clean -j"$(nproc)"
           fi
 
+      - name: Validate and package UBI firmware
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true'
+        run: python3 Scripts/UBI.py package wrt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.WRT_CONFIG }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ./wrt/upload/*
+          if-no-files-found: error
+
+      - name: Release UBI firmware
+        if: env.WRT_UBI == 'true' && env.WRT_TEST != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.WRT_CONFIG == 'AIROHA-UBI-NOPON' && 'UBI-NOPON-bingoguo93-6.18' || 'UBI' }}-${{ env.WRT_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
+          target_commitish: ${{ github.sha }}
+          fail_on_unmatched_files: true
+          files: ./wrt/upload/*
+          body: |
+            Nokia XG-040G-MD all-in-UBI：nokia_xg-040g-md-ubi
+            构建类型：${{ env.WRT_CONFIG }}
+            ${{ env.WRT_CONFIG == 'AIROHA-UBI-NOPON' && '无 PON 版：光口不启用；LAN1/LAN2/LAN3 为 LAN，LAN4 为 WAN。' || '主线 ImmortalWrt UBI 版；不是 AIR-ONU PonWrt 固件。' }}
+            Linux SkyHigh Robust Read workaround 已检查普通读与连续读路径。
+            升级文件：*-nokia_xg-040g-md-ubi-squashfs-sysupgrade.itb
+            recovery.itb 是 RAM 恢复镜像；不是持久升级文件。
+            仅适用于已完成兼容 U-Boot/all-in-UBI 布局转换的 XG-040G-MD。
+            原厂/TCBOOT 不能直接跨布局 sysupgrade，禁止 -F 强刷。
+            刷机前核对同机备份、SHA256SUMS 与 sysupgrade -T；迁移使用 LAN2/LAN3/LAN4。
+            详细限制与迁移注意事项请先阅读本仓库 README。
+            源码：${{ env.WRT_REPO }}，分支：${{ env.WRT_BRANCH }}，提交：${{ env.WRT_HASH }}
+            CI 提交：${{ github.sha }}；构建：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            包变化：package-selection-changes.json；补丁验证：skyhigh-verification.json
+            登录地址：${{ env.WRT_IP }}；密码：${{ env.WRT_PW }}（首次登录请设置密码）
+
       - name: Release Firmware
-        uses: softprops/action-gh-release@master
+        if: env.WRT_UBI != 'true' && env.WRT_TEST != 'true'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
-          files: ./wrt/upload/*.*
+          fail_on_unmatched_files: true
+          files: ./wrt/upload/*
           body: |
             这是个平台固件包，内含多个设备！
             请注意选择你需要的设备固件！
-            不要问，刷就完事了！
+            刷机前核对设备、分区布局和备份，禁止跨布局强刷。
 
             全系带开源硬件加速，别问了！
 
@@ -253,3 +352,22 @@ jobs:
 
             内核版本：${{env.WRT_KVER}}
             插件列表：${{env.WRT_LIST}}
+
+      - name: Upload UBI failure diagnostics
+        if: failure() && env.WRT_UBI == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UBI-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            ./wrt/.config
+            ./wrt/.config.requested
+            ./wrt/package-selection-changes.json
+            ./wrt/skyhigh-verification.json
+            ./wrt/nopon-verification.json
+            ./wrt/bin/targets/airoha/an7581/*.itb
+            ./wrt/bin/targets/airoha/an7581/*.manifest
+            ./wrt/bin/targets/airoha/an7581/*.json
+            ./wrt/bin/targets/airoha/an7581/*.buildinfo
+            ./wrt/build_dir/target-*/linux-airoha_an7581/image-an7581-nokia_xg-040g-md-ubi.dtb
+          if-no-files-found: warn

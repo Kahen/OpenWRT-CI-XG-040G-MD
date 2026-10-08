@@ -1,0 +1,23 @@
+# XG-040G-MD all-in-UBI, based on bingoguo93 6.18; Ethernet WAN only.
+CONFIG_TARGET_airoha=y
+CONFIG_TARGET_airoha_an7581=y
+CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y
+CONFIG_KERNEL_DEVMEM=y
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_BUSYBOX_CONFIG_DEVMEM=y
+CONFIG_PACKAGE_kmod-dummy=y
+CONFIG_PACKAGE_fitblk=y
+CONFIG_PACKAGE_airoha-en7581-npu-firmware=y
+CONFIG_PACKAGE_airoha-en8811h-firmware=y
+CONFIG_PACKAGE_luci-app-airoha-npu=y
+CONFIG_PACKAGE_vlmcsd=n
+CONFIG_PACKAGE_i2c-tools=y
+# PON feed packages are deliberately excluded from this build.
+CONFIG_PACKAGE_luci-app-pon=n
+CONFIG_PACKAGE_kmod-airoha-en7572=n
+CONFIG_PACKAGE_kmod-airoha-paged-bosa=n
+CONFIG_PACKAGE_kmod-airoha-pon-frontend=n
+CONFIG_PACKAGE_kmod-airoha-xpon=n
+CONFIG_PACKAGE_airoha-pon-debug=n
+CONFIG_PACKAGE_airoha-ponctl=n
+CONFIG_PACKAGE_airoha-pond=n

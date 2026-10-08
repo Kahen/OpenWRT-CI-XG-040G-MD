@@ -1,0 +1,82 @@
+Subject: mtd: spinand: use SkyHigh Robust Read readiness check
+
+Based on the XG-040G-MD community workaround, adapted to Linux 6.18.
+SkyHigh AN223239 requires two consecutive OIP=0 status reads before
+the next command. Preserve the second status for on-die ECC handling.
+Apply only to manufacturer ID 0x01, in normal and continuous reads.
+The 400 ms timeout and error propagation follow the community patch.
+
+Reference: https://www.skyhighmemory.com/download/002-23239%20-%20SPI%20NAND%20Robust%20Read%20Method.pdf
+Origin: https://github.com/xiangtailiang/OpenWrt-for-XG-040G-MD/blob/main/patch/600-mtd-spinand-add-skyhigh-robust-read-workaround.patch
+License: GPL-2.0-only (Linux driver modification)
+
+--- a/drivers/mtd/nand/spi/core.c
++++ b/drivers/mtd/nand/spi/core.c
+@@ -613,6 +613,35 @@
+ 	return spinand_write_reg_op(spinand, REG_BLOCK_LOCK, lock);
+ }
+ 
++/* SkyHigh AN223239: require two consecutive ready status reads. */
++static int spinand_read_page_wait(struct spinand_device *spinand, u8 *s)
++{
++	unsigned long timeo = jiffies + msecs_to_jiffies(400);
++	u8 status;
++	int ret;
++
++	do {
++		ret = spinand_read_status(spinand, &status);
++		if (ret)
++			return ret;
++
++		if (status & STATUS_BUSY)
++			continue;
++
++		ret = spinand_read_status(spinand, &status);
++		if (ret)
++			return ret;
++
++		if (!(status & STATUS_BUSY))
++			break;
++
++	} while (time_before(jiffies, timeo));
++
++	*s = status;
++
++	return status & STATUS_BUSY ? -ETIMEDOUT : 0;
++}
++
+ /**
+  * spinand_read_page() - Read a page
+  * @spinand: the spinand device
+@@ -636,10 +665,13 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = spinand_wait(spinand,
+-			   SPINAND_READ_INITIAL_DELAY_US,
+-			   SPINAND_READ_POLL_DELAY_US,
+-			   &status);
++	if (spinand->id.data[0] == 0x01)
++		ret = spinand_read_page_wait(spinand, &status);
++	else
++		ret = spinand_wait(spinand,
++				   SPINAND_READ_INITIAL_DELAY_US,
++				   SPINAND_READ_POLL_DELAY_US,
++				   &status);
+ 	if (ret < 0)
+ 		return ret;
+ 
+@@ -802,8 +835,11 @@
+ 		if (ret)
+ 			goto end_cont_read;
+ 
+-		ret = spinand_wait(spinand, SPINAND_READ_INITIAL_DELAY_US,
+-				   SPINAND_READ_POLL_DELAY_US, NULL);
++		if (spinand->id.data[0] == 0x01)
++			ret = spinand_read_page_wait(spinand, &status);
++		else
++			ret = spinand_wait(spinand, SPINAND_READ_INITIAL_DELAY_US,
++					   SPINAND_READ_POLL_DELAY_US, NULL);
+ 		if (ret < 0)
+ 			goto end_cont_read;
+ 

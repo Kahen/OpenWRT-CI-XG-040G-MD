@@ -1,0 +1,54 @@
+name: AIR-UBI-NOPON
+
+on:
+  push:
+    branches: [fix/skyhigh-ubi]
+    paths:
+      - .github/workflows/AIR-UBI-NOPON.yml
+      - .github/workflows/WRT-CORE.yml
+      - Config/AIROHA-UBI-NOPON.txt
+      - Scripts/UBI.py
+      - Scripts/NoPON.py
+      - Patches/airoha-6.18/**
+  workflow_run:
+    workflows: [Auto-Clean]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      PACKAGE:
+        description: '调整普通插件包，多个配置用字面 \n 分隔；此版本不允许启用 PON。'
+        required: false
+        type: string
+      TEST:
+        description: '只验证配置，不编译和发布固件。'
+        default: false
+        required: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: air-ubi-nopon-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    uses: ./.github/workflows/WRT-CORE.yml
+    with:
+      WRT_CONFIG: AIROHA-UBI-NOPON
+      WRT_THEME: argon
+      WRT_NAME: OWRT
+      WRT_SSID: OWRT
+      WRT_WORD: '12345678'
+      WRT_IP: 192.168.1.1
+      WRT_PW: 无
+      WRT_REPO: https://github.com/bingoguo93/immortalwrt.git
+      WRT_BRANCH: '6.18'
+      # 与用户指定的 2026-10-05 TCBOOT Release 使用同一源码提交。
+      WRT_REVISION: f0de31b737890e456c144fa08de34451b40036d8
+      WRT_SOURCE: bingoguo93/immortalwrt
+      WRT_PACKAGE: ${{ inputs.PACKAGE || '' }}
+      WRT_TEST: ${{ inputs.TEST || false }}

@@ -1,0 +1,27 @@
+name: Validate workflows and UBI guards
+
+on:
+  pull_request:
+  push:
+    branches: [main, fix/skyhigh-ubi]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check workflow configuration and embedded shell
+        uses: docker://rhysd/actionlint:1.7.12
+      - name: Check script syntax
+        run: |
+          for script in Scripts/*.sh; do bash -n "$script"; done
+          python3 -m py_compile Scripts/UBI.py Scripts/NoPON.py
+      - name: Test UBI build and release guards
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y device-tree-compiler squashfs-tools u-boot-tools
+          python3 -m unittest discover -s tests -v

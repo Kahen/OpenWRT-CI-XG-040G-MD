@@ -23,7 +23,9 @@ on:
           - ROCKCHIP
           - X86
           - TEST
-          - AIROHA-WIFI-NO
+          - AIROHA-MAIN
+          - AIROHA-TCBOOT
+          - AIROHA-ONU
       SOURCE:
         default: 'VIKINGYFY/immortalwrt'
         required: true
@@ -81,4 +83,4 @@ jobs:
       #插件调整
       WRT_PACKAGE: ${{inputs.PACKAGE}}
       #仅输出配置文件
-      WRT_TEST: ${{inputs.TEST}}
+      WRT_TEST: ${{ inputs.TEST || false }}

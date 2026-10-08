@@ -75,7 +75,12 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 	fi
 fi
 
-#调整网口顺序
+#调整网口顺序（UBI 保持既有 LAN4=WAN 行为）
+if [[ "$WRT_TARGET" == "airoha" ]]; then
 sed -i 's/ucidef_set_interface_lan "lan1 lan2 lan3 lan4"/ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "lan4"/g' target/linux/airoha/an7581/base-files/etc/board.d/02_network
-sed -i 's/interrupts.*//g' target/linux/airoha/dts/an7581-nokia_xg-040g-md-common.dtsi
+# UBI uses the upstream DTS interrupt definitions. Keep the legacy workaround scoped.
+if [[ "$WRT_CONFIG" == "AIROHA-TCBOOT" ]]; then
+  sed -i 's/interrupts.*//g' target/linux/airoha/dts/an7581-nokia_xg-040g-md-common.dtsi
+fi
+fi
 

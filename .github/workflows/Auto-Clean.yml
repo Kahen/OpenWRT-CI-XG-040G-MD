@@ -4,7 +4,7 @@
 name: Auto-Clean
 
 on:
-  #自动清理：每天早上5点
+  #自动清理：北京时间每天01:00；随后触发自动编译
   schedule:
     - cron: 0 17 * * *
   #手动清理
@@ -21,8 +21,7 @@ jobs:
         with:
           gh_token: ${{secrets.GITHUB_TOKEN}}
           delete_releases: true
-          releases_keep_latest: 0
+          releases_keep_latest: 10
           delete_tags: true
           delete_workflows: true
-          #保留最近7天的构建记录和日志，方便排查失败原因
           workflows_keep_day: 7
